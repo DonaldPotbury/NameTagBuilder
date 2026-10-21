@@ -75,4 +75,7 @@ those options can become additional parameters without changing the workflow.
 Use a feature branch and a GitHub pull request for each change. This lets both
 contributors test a proposed model before it reaches `main`. See
 [the Git workflow](Docs/git-workflow.md) for the agreed process and test checklist.
+For a GitHub Desktop-only walkthrough, see [Ken's workflow](Docs/github-desktop-workflow.md).
+For copy-and-paste help when working with Codex, see
+[Codex prompts for Ken](Docs/codex-prompts-for-ken.md).
 
