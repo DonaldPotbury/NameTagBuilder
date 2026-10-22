@@ -13,7 +13,15 @@ with 0.8 mm raised lettering.
 
 ## Generate an STL
 
-Activate the project Conda environment, then run:
+Create and activate the project virtual environment once:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+On macOS or Linux, activate it with `source .venv/bin/activate` instead. Then run:
 
 ```bash
 python nametag_builder.py --name "Alex" --output output/alex_name_tag.stl
