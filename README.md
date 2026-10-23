@@ -11,6 +11,22 @@ definition rather than needing CAD edits for each tag.
 a keyring hole. All dimensions are millimetres. The default tag is 75 × 28 × 3 mm
 with 0.8 mm raised lettering.
 
+`lifeguard_tag.py` is a separate, purpose-built model for the round **Lifeguard
+tag**. Its defaults match the Lucy tag: 45 mm diameter, 2 mm thick, with a
+5 mm hole centered on the disk edge in its external tab, 0.8 mm of material
+around the perimeter, a 2.5 mm wall around the hole, and a 2 mm blend into the
+disk. It uses Arial Narrow for “LIFEGUARD” and Arial for the name, both at
+5.5 mm. Lettering is always recessed as a
+first-layer inlay for face-down printing. It previews the red tag and white
+lettering as separate bodies in CQ-editor and can export them as separate STLs
+for two-colour printing.
+
+```bash
+python lifeguard_tag.py --name "Lucy" --output output/lucy_lifeguard.stl
+```
+
+Use `--without-hole` for a desktop-only version.
+
 ## Generate an STL
 
 Create and activate the project virtual environment once:
