@@ -19,10 +19,20 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 from pathlib import Path
 
 import cadquery as cq
 from cadquery import exporters
+
+
+# OCP CAD Viewer is optional. CQ-editor does not need this import because it
+# supplies show_object itself when executing the script.
+try:
+    from ocp_vscode import show_object as _ocp_show_object
+except ImportError:
+    _ocp_show_object = None
+
 
 class LifeguardTagParameters:
     """Dimensions in millimetres; defaults reproduce Don's Lucy tag."""
@@ -279,13 +289,25 @@ def main() -> None:
     print(f"Wrote {tag_path.resolve()} and {letters_path.resolve()}")
 
 
-# CQ-editor supplies show_object when it runs this file.  Showing the bodies
-# separately makes the two-colour intent obvious in the preview.
-if "show_object" in globals():
+# CQ-editor supplies show_object when it runs this file; OCP CAD Viewer exposes
+# the optional _ocp_show_object import above. Showing the bodies separately
+# makes the two-colour intent obvious in either preview.
+_preview_show_object = globals().get("show_object", _ocp_show_object)
+if _preview_show_object is not None:
     preview = build_lifeguard_tag(LifeguardTagParameters(name="Benjamin"))
-    show_object(preview.tag, name="Lifeguard tag", options={"color": (0.90, 0.05, 0.05)})
-    show_object(preview.letters, name="Lifeguard lettering", options={"color": (1.0, 1.0, 1.0)})
+    _preview_show_object(
+        preview.tag,
+        name="Lifeguard tag",
+        options={"color": (0.90, 0.05, 0.05)},
+    )
+    _preview_show_object(
+        preview.letters,
+        name="Lifeguard lettering",
+        options={"color": (1.0, 1.0, 1.0)},
+    )
 
 
-if __name__ == "__main__":
+# In VS Code, the OCP import above means an ordinary Run is a clean preview.
+# Supplying --output retains the command-line STL export workflow.
+if __name__ == "__main__" and (_ocp_show_object is None or "--output" in sys.argv):
     main()
