@@ -3,3 +3,9 @@
 __pycache__/
 *.py[cod]
 output/
+
+# Personal VS Code configuration
+.vscode/settings.json
+
+# Generated print output
+*.stl

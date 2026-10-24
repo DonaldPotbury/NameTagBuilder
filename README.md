@@ -27,6 +27,20 @@ python lifeguard_tag.py --name "Lucy" --output output/lucy_lifeguard.stl
 
 Use `--without-hole` for a desktop-only version.
 
+## Lifeguard Tag Maker panel
+
+`lifeguard_tag_app.py` is a small input panel intended for routine use in
+Thonny. Run it with a Python interpreter that has CadQuery installed:
+
+```bash
+python lifeguard_tag_app.py
+```
+
+Enter the name, choose whether to include the keyring hole, select the original
+Lifeguard cross or the YMCA-logo layout, and choose an output folder. The panel
+creates the aligned tag and lettering STL files needed for Bambu Studio's
+multi-part import. A colored 3MF export is the next planned output option.
+
 ## Generate an STL
 
 Create and activate the project virtual environment once:
