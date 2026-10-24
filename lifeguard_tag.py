@@ -26,6 +26,10 @@ import cadquery as cq
 from cadquery import exporters
 
 
+PROJECT_DIRECTORY = Path(__file__).resolve().parent
+YMCA_LOGO_DXF = PROJECT_DIRECTORY / "assets" / "ymca_logo.dxf"
+
+
 # OCP CAD Viewer is optional. CQ-editor does not need this import because it
 # supplies show_object itself when executing the script.
 try:
@@ -52,18 +56,22 @@ class LifeguardTagParameters:
         lifeguard_font="Arial Narrow",
         name_font="Arial",
         text_size=5.5,
-        text_raise=0.55,
-        inlay_depth=0.55,
+        text_raise=0.195,
+        inlay_depth=0.195,
         style="inlaid",
         # With 5.5 mm lettering, these radii leave roughly 3–4 mm from the
         # outside of the glyphs to the 45 mm disk perimeter.
         lifeguard_arc_radius=16.5,
         lifeguard_arc_degrees=150.0,
         name_arc_radius=16.0,
-        name_character_spacing_degrees=27.0,
+        name_letter_spacing=0.8,
         name_max_arc_degrees=140.0,
         cross_size=20.0,
         cross_arm_width=8.0,
+        center_mark="cross",
+        ymca_logo_scale=1.6,
+        ymca_logo_y_offset=3.0,
+        ymca_name_text_size=6.0,
     ):
         self.name = name
         self.diameter = diameter
@@ -82,10 +90,14 @@ class LifeguardTagParameters:
         self.lifeguard_arc_radius = lifeguard_arc_radius
         self.lifeguard_arc_degrees = lifeguard_arc_degrees
         self.name_arc_radius = name_arc_radius
-        self.name_character_spacing_degrees = name_character_spacing_degrees
+        self.name_letter_spacing = name_letter_spacing
         self.name_max_arc_degrees = name_max_arc_degrees
         self.cross_size = cross_size
         self.cross_arm_width = cross_arm_width
+        self.center_mark = center_mark
+        self.ymca_logo_scale = ymca_logo_scale
+        self.ymca_logo_y_offset = ymca_logo_y_offset
+        self.ymca_name_text_size = ymca_name_text_size
 
     def validate(self) -> None:
         if not self.name.strip():
@@ -96,6 +108,14 @@ class LifeguardTagParameters:
             raise ValueError("text dimensions must be positive")
         if self.style != "inlaid":
             raise ValueError("Lifeguard tags use first-layer inlaid lettering")
+        if self.center_mark not in {"cross", "ymca"}:
+            raise ValueError("center_mark must be 'cross' or 'ymca'")
+        if self.name_letter_spacing < 0:
+            raise ValueError("name_letter_spacing cannot be negative")
+        if self.ymca_logo_scale <= 0:
+            raise ValueError("ymca_logo_scale must be positive")
+        if self.ymca_name_text_size <= 0:
+            raise ValueError("ymca_name_text_size must be positive")
         if self.include_keyring_hole:
             if self.hole_diameter <= 0 or self.hole_wall < 0:
                 raise ValueError("hole dimensions are invalid")
@@ -177,11 +197,88 @@ def _arc_text(
     return result
 
 
+def _bottom_name(params: LifeguardTagParameters) -> cq.Workplane:
+    """Place the lower name with natural glyph spacing, centered at 6 o'clock."""
+    visible_characters = [character for character in params.name.strip() if not character.isspace()]
+    if not visible_characters:
+        raise ValueError("name must contain visible characters")
+
+    # Short names previously filled a fixed 27-degree-per-letter span.  That
+    # made a three-letter name look artificially spaced apart.  Measure the
+    # actual bold glyphs, use a modest 0.8 mm default gap, and only tighten
+    # tracking when a genuinely long name needs the 140-degree limit.
+    text_size = (
+        params.ymca_name_text_size if params.center_mark == "ymca" else params.text_size
+    )
+    widths = [
+        cq.Workplane("XY")
+        .text(
+            character,
+            text_size,
+            params.inlay_depth,
+            font=params.name_font,
+            kind="bold",
+            halign="center",
+            valign="center",
+        )
+        .val()
+        .BoundingBox()
+        .xlen
+        for character in visible_characters
+    ]
+    natural_length = sum(widths) + params.name_letter_spacing * (len(widths) - 1)
+    natural_span = math.degrees(natural_length / params.name_arc_radius)
+    span = min(natural_span, params.name_max_arc_degrees)
+    return _arc_text(
+        params.name.strip(),
+        params.name_arc_radius,
+        span,
+        params.name_font,
+        text_size,
+        params.inlay_depth,
+        270.0 - span / 2,
+        -270.0,
+    )
+
+
 def _cross(size: float, arm_width: float, height: float) -> cq.Workplane:
     """Return a centered, conventional plus-sign solid."""
     vertical = cq.Workplane("XY").rect(arm_width, size).extrude(height)
     horizontal = cq.Workplane("XY").rect(size, arm_width).extrude(height)
     return vertical.union(horizontal)
+
+
+def _ymca_logo(height: float, scale: float, y_offset: float) -> cq.Workplane:
+    """Return Don's Fusion-drawn YMCA logo, centered on the tag.
+
+    The source sketch is preserved as a DXF rather than traced from an image.
+    The sketch includes its own corner radii and fits inside the intended
+    20 mm center square.
+    """
+    if not YMCA_LOGO_DXF.exists():
+        raise FileNotFoundError(f"YMCA logo source is missing: {YMCA_LOGO_DXF}")
+
+    source = cq.importers.importDXF(str(YMCA_LOGO_DXF))
+    # Calculate the center from the complete source outline.  Scale its 2D
+    # wires before extrusion so the enlarged logo remains at the selected
+    # inlay depth instead of becoming a raised feature.
+    unscaled_logo = source.wires().toPending().extrude(height)
+    bounds = unscaled_logo.val().BoundingBox()
+    center_offset = (
+        -(bounds.xmin + bounds.xmax) / 2,
+        -(bounds.ymin + bounds.ymax) / 2,
+        0,
+    )
+    scaled_wires = [
+        wire.translate(center_offset).scale(scale) for wire in source.wires().vals()
+    ]
+    return (
+        cq.Workplane("XY")
+        .newObject(scaled_wires)
+        .toPending()
+        .extrude(height)
+        .translate((0, y_offset, 0))
+    )
 
 
 def build_lifeguard_tag(params: LifeguardTagParameters) -> LifeguardTagModel:
@@ -215,41 +312,38 @@ def build_lifeguard_tag(params: LifeguardTagParameters) -> LifeguardTagModel:
     # cut so the first-layer inlay remains sharply defined.
     tag = tag.edges("not |Z").fillet(params.edge_wall)
 
-    lifeguard = _arc_text(
-        "LIFEGUARD",
-        params.lifeguard_arc_radius,
-        # Travel from upper-left to upper-right, beneath the keyring hole.
-        -params.lifeguard_arc_degrees,
-        params.lifeguard_font,
-        params.text_size,
-        params.inlay_depth,
-        165.0,
-        -90.0,
-    )
-    # Keep every name centered at the bottom.  Four letters such as Lucy need
-    # roughly 80 degrees, not the full arc used by the nine-letter heading.
-    name_span = min(
-        params.name_character_spacing_degrees * (len(params.name.strip()) - 1),
-        params.name_max_arc_degrees,
-    )
-    name_start = 270.0 - name_span / 2
-    name = _arc_text(
-        params.name.strip(),
-        params.name_arc_radius,
-        name_span,
-        params.name_font,
-        params.text_size,
-        params.inlay_depth,
-        name_start,
-        -270.0,
-    )
-    lettering = lifeguard.union(name).union(
+    # The YMCA layout uses Don's centered logo and deliberately leaves the
+    # upper arc blank.  The original cross layout keeps LIFEGUARD at the top.
+    lifeguard = None
+    if params.center_mark == "cross":
+        lifeguard = _arc_text(
+            "LIFEGUARD",
+            params.lifeguard_arc_radius,
+            # Travel from upper-left to upper-right, beneath the keyring hole.
+            -params.lifeguard_arc_degrees,
+            params.lifeguard_font,
+            params.text_size,
+            params.inlay_depth,
+            165.0,
+            -90.0,
+        )
+    name = _bottom_name(params)
+    center_mark = (
         _cross(
             params.cross_size,
             params.cross_arm_width,
             params.inlay_depth,
         )
+        if params.center_mark == "cross"
+        else _ymca_logo(
+            params.inlay_depth,
+            params.ymca_logo_scale,
+            params.ymca_logo_y_offset,
+        )
     )
+    lettering = name.union(center_mark)
+    if lifeguard is not None:
+        lettering = lifeguard.union(lettering)
 
     # Recess the matching tool body into the face. Flip the result in the
     # slicer to print the inlaid face against the build plate.
@@ -272,6 +366,12 @@ def export_bodies(model: LifeguardTagModel, destination: Path) -> tuple[Path, Pa
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a YMCA Lifeguard tag.")
     parser.add_argument("--name", default="Lucy", help="Name below the cross")
+    parser.add_argument(
+        "--center-mark",
+        choices=("cross", "ymca"),
+        default="cross",
+        help="Use the original cross or the YMCA-logo layout",
+    )
     parser.add_argument("--without-hole", action="store_true", help="Omit the keyring hole")
     parser.add_argument("--output", type=Path, default=Path("lifeguard_tag.stl"))
     return parser.parse_args()
@@ -283,6 +383,7 @@ def main() -> None:
         LifeguardTagParameters(
             name=args.name,
             include_keyring_hole=not args.without_hole,
+            center_mark=args.center_mark,
         )
     )
     tag_path, letters_path = export_bodies(model, args.output)
@@ -293,8 +394,16 @@ def main() -> None:
 # the optional _ocp_show_object import above. Showing the bodies separately
 # makes the two-colour intent obvious in either preview.
 _preview_show_object = globals().get("show_object", _ocp_show_object)
-if _preview_show_object is not None:
-    preview = build_lifeguard_tag(LifeguardTagParameters(name="Benjamin"))
+# Do not open a preview merely because another program imports this model.
+# CQ-editor has its own execution namespace, while OCP previews occur when the
+# file itself is run from VS Code.
+if _preview_show_object is not None and (
+    ("show_object" in globals() or __name__ == "__main__") and "--output" not in sys.argv
+):
+    preview_mark = "ymca" if "--center-mark" in sys.argv and "ymca" in sys.argv else "cross"
+    preview = build_lifeguard_tag(
+        LifeguardTagParameters(name="Lucy", center_mark=preview_mark)
+    )
     _preview_show_object(
         preview.tag,
         name="Lifeguard tag",
@@ -302,8 +411,8 @@ if _preview_show_object is not None:
     )
     _preview_show_object(
         preview.letters,
-        name="Lifeguard lettering",
-        options={"color": (1.0, 1.0, 1.0)},
+        name="YMCA logo and name" if preview_mark == "ymca" else "Lifeguard lettering",
+        options={"color": (0.0, 0.65, 0.25) if preview_mark == "ymca" else (1.0, 1.0, 1.0)},
     )
 
 
