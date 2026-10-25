@@ -15,7 +15,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from lifeguard_tag import LifeguardTagParameters, build_lifeguard_tag, export_bodies
+from lifeguard_tag import (
+    LifeguardTagParameters,
+    build_lifeguard_tag,
+    export_bodies,
+    export_two_color_3mf,
+)
 
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parent
@@ -47,6 +52,35 @@ def create_print_files(
     return export_bodies(model, destination)
 
 
+def create_3mf_file(
+    name: str, include_keyring_hole: bool, center_mark: str, output_directory: Path
+) -> Path:
+    """Create one color-aware 3MF file containing the aligned two-part tag."""
+    clean_name = name.strip()
+    if not clean_name:
+        raise ValueError("Enter a name before creating a 3MF file.")
+
+    model = build_lifeguard_tag(
+        LifeguardTagParameters(
+            name=clean_name,
+            include_keyring_hole=include_keyring_hole,
+            center_mark=center_mark,
+        )
+    )
+    if center_mark == "ymca":
+        tag_name, tag_color = "YMCA green tag", "#00A651FF"
+    else:
+        tag_name, tag_color = "Lifeguard red tag", "#E60012FF"
+    destination = output_directory / f"{safe_filename_part(clean_name)}_lifeguard.3mf"
+    return export_two_color_3mf(
+        model,
+        destination,
+        tag_name=tag_name,
+        tag_color=tag_color,
+        inlay_name="White lettering and center mark",
+    )
+
+
 class LifeguardTagApp(ttk.Frame):
     """The small, non-CAD-facing form used for routine tag creation."""
 
@@ -71,7 +105,7 @@ class LifeguardTagApp(ttk.Frame):
         )
         ttk.Label(
             self,
-            text="Creates matching tag and lettering STL parts for two-colour printing.",
+            text="Creates a two-color 3MF or matching STL parts for Bambu Studio.",
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 18))
 
         ttk.Label(self, text="Name").grid(row=2, column=0, sticky="w", pady=4)
@@ -114,11 +148,16 @@ class LifeguardTagApp(ttk.Frame):
         )
 
         ttk.Separator(self).grid(row=6, column=0, columnspan=3, sticky="ew", pady=18)
-        ttk.Button(self, text="Create STL Parts", command=self.create).grid(
-            row=7, column=1, sticky="e"
+        button_frame = ttk.Frame(self)
+        button_frame.grid(row=7, column=0, columnspan=3, sticky="e")
+        ttk.Button(button_frame, text="Create 2-color 3MF", command=self.create_3mf).grid(
+            row=0, column=0
         )
-        ttk.Button(self, text="Close", command=self.master.destroy).grid(
-            row=7, column=2, sticky="e", padx=(8, 0)
+        ttk.Button(button_frame, text="Create STL Parts", command=self.create_stl).grid(
+            row=0, column=1, padx=(8, 0)
+        )
+        ttk.Button(button_frame, text="Close", command=self.master.destroy).grid(
+            row=0, column=2, padx=(8, 0)
         )
         ttk.Label(self, textvariable=self.status, wraplength=410).grid(
             row=8, column=0, columnspan=3, sticky="w", pady=(16, 0)
@@ -132,7 +171,7 @@ class LifeguardTagApp(ttk.Frame):
         if selected:
             self.output_directory.set(selected)
 
-    def create(self) -> None:
+    def create_stl(self) -> None:
         try:
             tag_path, letters_path = create_print_files(
                 self.name.get(),
@@ -148,6 +187,25 @@ class LifeguardTagApp(ttk.Frame):
         messagebox.showinfo(
             "Lifeguard tag created",
             "Load the two STL files together in Bambu Studio as one object with multiple parts.",
+            parent=self.master,
+        )
+
+    def create_3mf(self) -> None:
+        try:
+            path = create_3mf_file(
+                self.name.get(),
+                self.include_keyring_hole.get(),
+                self.center_mark.get(),
+                Path(self.output_directory.get()).expanduser(),
+            )
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Could not create 3MF", str(error), parent=self.master)
+            return
+
+        self.status.set(f"Created:\n{path.name}")
+        messagebox.showinfo(
+            "Two-color 3MF created",
+            "Open the 3MF in Bambu Studio. It contains aligned tag and inlay parts with green/red and white display colors.",
             parent=self.master,
         )
 

@@ -38,8 +38,15 @@ python lifeguard_tag_app.py
 
 Enter the name, choose whether to include the keyring hole, select the original
 Lifeguard cross or the YMCA-logo layout, and choose an output folder. The panel
-creates the aligned tag and lettering STL files needed for Bambu Studio's
-multi-part import. A colored 3MF export is the next planned output option.
+can create the aligned tag and lettering STL files needed for Bambu Studio's
+multi-part import, or one two-color 3MF. In Bambu Studio, assign the two 3MF
+parts to your preferred filaments if they are not assigned automatically.
+
+The same archive can be created from the command line:
+
+```bash
+python lifeguard_tag.py --name "Amy" --center-mark ymca --format 3mf --output output/amy.3mf
+```
 
 ## Generate an STL
 

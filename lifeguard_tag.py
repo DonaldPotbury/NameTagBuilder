@@ -10,9 +10,11 @@ Examples:
 
     python lifeguard_tag.py --name Lucy --output output/lucy_lifeguard.stl
     python lifeguard_tag.py --name Emma --output output/emma.stl
+    python lifeguard_tag.py --name Amy --center-mark ymca --format 3mf --output output/amy.3mf
 
 For two-colour printing, use the automatically generated *_tag.stl and
-*_letters.stl files as separate bodies in the slicer.
+*_letters.stl files as separate bodies in the slicer, or create one color-aware
+3MF archive with --format 3mf.
 """
 
 from __future__ import annotations
@@ -20,7 +22,9 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import cadquery as cq
 from cadquery import exporters
@@ -401,6 +405,87 @@ def export_bodies(model: LifeguardTagModel, destination: Path) -> tuple[Path, Pa
     return tag_path, letters_path
 
 
+def _three_mf_mesh(shape: cq.Shape) -> str:
+    """Return the Core 3MF mesh XML for one CadQuery solid."""
+    vertices, triangles = shape.tessellate(0.1)
+    # CadQuery tessellates individual BREP faces independently.  Adjacent faces
+    # can therefore have duplicate vertices at the same coordinates but with
+    # different indexes. STL tolerates that; a 3MF mesh does not, and Bambu
+    # reports those seams as thousands of open edges.  Reuse vertices by the
+    # exact precision written to the XML before emitting the triangles.
+    vertex_indexes: dict[tuple[float, float, float], int] = {}
+    unique_vertices: list[tuple[float, float, float]] = []
+    index_map: list[int] = []
+    for vertex in vertices:
+        coordinates = (round(vertex.x, 6), round(vertex.y, 6), round(vertex.z, 6))
+        if coordinates not in vertex_indexes:
+            vertex_indexes[coordinates] = len(unique_vertices)
+            unique_vertices.append(coordinates)
+        index_map.append(vertex_indexes[coordinates])
+
+    vertex_xml = "".join(
+        f'<vertex x="{x:.6f}" y="{y:.6f}" z="{z:.6f}"/>'
+        for x, y, z in unique_vertices
+    )
+    triangle_xml = "".join(
+        f'<triangle v1="{index_map[triangle[0]]}" v2="{index_map[triangle[1]]}" v3="{index_map[triangle[2]]}"/>'
+        for triangle in triangles
+    )
+    return f"<mesh><vertices>{vertex_xml}</vertices><triangles>{triangle_xml}</triangles></mesh>"
+
+
+def export_two_color_3mf(
+    model: LifeguardTagModel,
+    destination: Path,
+    *,
+    tag_name: str = "Tag body",
+    tag_color: str = "#00A651FF",
+    inlay_name: str = "Lettering and center mark",
+    inlay_color: str = "#FFFFFFFF",
+) -> Path:
+    """Write one standard 3MF archive with separately colored tag and inlay parts.
+
+    The archive has one build item containing two component objects.  This lets
+    slicers import it as one aligned, multi-part object while retaining the
+    display colors as Base Material properties.
+    """
+    destination = destination.with_suffix(".3mf")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tag_mesh = _three_mf_mesh(model.tag.val())
+    inlay_mesh = _three_mf_mesh(model.letters.val())
+    model_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <metadata name="Title">Lifeguard Tag</metadata>
+  <resources>
+    <basematerials id="1">
+      <base name="{escape(tag_name)}" displaycolor="{escape(tag_color)}"/>
+      <base name="{escape(inlay_name)}" displaycolor="{escape(inlay_color)}"/>
+    </basematerials>
+    <object id="2" type="model" name="{escape(tag_name)}" pid="1" pindex="0">{tag_mesh}</object>
+    <object id="3" type="model" name="{escape(inlay_name)}" pid="1" pindex="1">{inlay_mesh}</object>
+    <object id="4" type="model" name="Lifeguard Tag"><components><component objectid="2"/><component objectid="3"/></components></object>
+  </resources>
+  <build><item objectid="4"/></build>
+</model>
+'''
+    content_types = '''<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>
+'''
+    relationships = '''<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>
+'''
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", relationships)
+        archive.writestr("3D/3dmodel.model", model_xml)
+    return destination
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a YMCA Lifeguard tag.")
     parser.add_argument("--name", default="Lucy", help="Name below the cross")
@@ -412,6 +497,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--without-hole", action="store_true", help="Omit the keyring hole")
     parser.add_argument("--output", type=Path, default=Path("lifeguard_tag.stl"))
+    parser.add_argument(
+        "--format",
+        choices=("stl", "3mf"),
+        default="stl",
+        help="Write separate STL parts or one two-color 3MF archive",
+    )
     return parser.parse_args()
 
 
@@ -424,8 +515,22 @@ def main() -> None:
             center_mark=args.center_mark,
         )
     )
-    tag_path, letters_path = export_bodies(model, args.output)
-    print(f"Wrote {tag_path.resolve()} and {letters_path.resolve()}")
+    if args.format == "3mf":
+        if args.center_mark == "ymca":
+            tag_name, tag_color = "YMCA green tag", "#00A651FF"
+        else:
+            tag_name, tag_color = "Lifeguard red tag", "#E60012FF"
+        path = export_two_color_3mf(
+            model,
+            args.output,
+            tag_name=tag_name,
+            tag_color=tag_color,
+            inlay_name="White lettering and center mark",
+        )
+        print(f"Wrote {path.resolve()}")
+    else:
+        tag_path, letters_path = export_bodies(model, args.output)
+        print(f"Wrote {tag_path.resolve()} and {letters_path.resolve()}")
 
 
 # CQ-editor supplies show_object when it runs this file; OCP CAD Viewer exposes
