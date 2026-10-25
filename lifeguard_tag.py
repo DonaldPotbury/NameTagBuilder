@@ -69,8 +69,8 @@ class LifeguardTagParameters:
         cross_size=20.0,
         cross_arm_width=8.0,
         center_mark="cross",
-        ymca_logo_scale=1.6,
-        ymca_logo_y_offset=3.0,
+        ymca_logo_scale=1.2,
+        ymca_logo_y_offset=4.0,
         ymca_name_text_size=6.0,
     ):
         self.name = name
@@ -145,17 +145,26 @@ def _arc_text(
     height: float,
     start_degrees: float,
     rotation_offset: float,
+    tracking: float | None = None,
 ) -> cq.Workplane:
     """Create individually positioned glyphs with proportional arc spacing."""
-    characters = [character for character in text if not character.isspace()]
-    if not characters:
+    characters = list(text.strip())
+    if not any(not character.isspace() for character in characters):
         raise ValueError("arc text must contain visible characters")
 
     # CadQuery has no text-on-path operation. Measure each bold glyph and use
     # its actual width as arc length, producing a close visual approximation of
     # proportional text rather than giving every character equal angular space.
-    glyphs = [
-        cq.Workplane("XY").text(
+    # Whitespace deliberately receives a width but no solid so full names keep
+    # their word breaks.
+    glyphs: list[cq.Workplane | None] = []
+    widths: list[float] = []
+    for character in characters:
+        if character.isspace():
+            glyphs.append(None)
+            widths.append(size * 0.33)
+            continue
+        glyph = cq.Workplane("XY").text(
             character,
             size,
             height,
@@ -164,33 +173,44 @@ def _arc_text(
             halign="center",
             valign="center",
         )
-        for character in characters
-    ]
-    widths = [glyph.val().BoundingBox().xlen for glyph in glyphs]
+        glyphs.append(glyph)
+        widths.append(glyph.val().BoundingBox().xlen)
+
     direction = 1.0 if span_degrees >= 0 else -1.0
-    available_arc_length = radius * math.radians(abs(span_degrees))
-    tracking = (
-        0.0
-        if len(glyphs) == 1
-        else max(0.0, (available_arc_length - sum(widths)) / (len(glyphs) - 1))
+    tracked_pairs = sum(
+        not characters[index].isspace() and not characters[index + 1].isspace()
+        for index in range(len(characters) - 1)
     )
+    if tracking is None:
+        available_arc_length = radius * math.radians(abs(span_degrees))
+        tracking = (
+            0.0
+            if not tracked_pairs
+            else max(0.0, (available_arc_length - sum(widths)) / tracked_pairs)
+        )
     angle = start_degrees + direction * math.degrees(widths[0] / (2 * radius))
 
     result: cq.Workplane | None = None
     for index, glyph in enumerate(glyphs):
-        glyph = (
-            glyph.rotate((0, 0, 0), (0, 0, 1), angle + rotation_offset)
-            .translate(
-                (
-                    radius * math.cos(math.radians(angle)),
-                    radius * math.sin(math.radians(angle)),
-                    0,
+        if glyph is not None:
+            glyph = (
+                glyph.rotate((0, 0, 0), (0, 0, 1), angle + rotation_offset)
+                .translate(
+                    (
+                        radius * math.cos(math.radians(angle)),
+                        radius * math.sin(math.radians(angle)),
+                        0,
+                    )
                 )
             )
-        )
-        result = glyph if result is None else result.union(glyph)
-        if index < len(glyphs) - 1:
-            center_distance = widths[index] / 2 + tracking + widths[index + 1] / 2
+            result = glyph if result is None else result.union(glyph)
+        if index < len(characters) - 1:
+            pair_tracking = (
+                tracking
+                if not characters[index].isspace() and not characters[index + 1].isspace()
+                else 0.0
+            )
+            center_distance = widths[index] / 2 + pair_tracking + widths[index + 1] / 2
             angle += direction * math.degrees(center_distance / radius)
 
     assert result is not None
@@ -199,8 +219,8 @@ def _arc_text(
 
 def _bottom_name(params: LifeguardTagParameters) -> cq.Workplane:
     """Place the lower name with natural glyph spacing, centered at 6 o'clock."""
-    visible_characters = [character for character in params.name.strip() if not character.isspace()]
-    if not visible_characters:
+    characters = list(params.name.strip())
+    if not any(not character.isspace() for character in characters):
         raise ValueError("name must contain visible characters")
 
     # Short names previously filled a fixed 27-degree-per-letter span.  That
@@ -210,25 +230,42 @@ def _bottom_name(params: LifeguardTagParameters) -> cq.Workplane:
     text_size = (
         params.ymca_name_text_size if params.center_mark == "ymca" else params.text_size
     )
-    widths = [
-        cq.Workplane("XY")
-        .text(
-            character,
-            text_size,
-            params.inlay_depth,
-            font=params.name_font,
-            kind="bold",
-            halign="center",
-            valign="center",
+    widths = []
+    for character in characters:
+        if character.isspace():
+            widths.append(text_size * 0.33)
+            continue
+        width = (
+            cq.Workplane("XY")
+            .text(
+                character,
+                text_size,
+                params.inlay_depth,
+                font=params.name_font,
+                kind="bold",
+                halign="center",
+                valign="center",
+            )
+            .val()
+            .BoundingBox()
+            .xlen
         )
-        .val()
-        .BoundingBox()
-        .xlen
-        for character in visible_characters
-    ]
-    natural_length = sum(widths) + params.name_letter_spacing * (len(widths) - 1)
+        widths.append(width)
+    tracked_pairs = sum(
+        not characters[index].isspace() and not characters[index + 1].isspace()
+        for index in range(len(characters) - 1)
+    )
+    natural_length = sum(widths) + params.name_letter_spacing * tracked_pairs
     natural_span = math.degrees(natural_length / params.name_arc_radius)
     span = min(natural_span, params.name_max_arc_degrees)
+    # Keep ordinary names at the preferred 0.8 mm tracking.  A long full
+    # name, however, must let _arc_text reduce that tracking to fit the capped
+    # span; otherwise its final characters drift beyond the intended center.
+    tracking = (
+        params.name_letter_spacing
+        if natural_span <= params.name_max_arc_degrees
+        else None
+    )
     return _arc_text(
         params.name.strip(),
         params.name_arc_radius,
@@ -238,6 +275,7 @@ def _bottom_name(params: LifeguardTagParameters) -> cq.Workplane:
         params.inlay_depth,
         270.0 - span / 2,
         -270.0,
+        tracking=tracking,
     )
 
 
