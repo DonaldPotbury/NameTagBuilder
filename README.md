@@ -75,6 +75,24 @@ The script validates the key dimensions before creating the solid. Open the STL
 in your slicer, check that the lettering is legible at the chosen size, and slice
 using the material and printer settings appropriate for the job.
 
+## Name Tag Maker panel
+
+`nametag_app.py` is a separate desktop panel for the general rectangular name tag. It asks for
+the name, length, width, font size and font name, a separate color for each letter, a base color
+for the tag body, text style, and the folder where the file should be saved. Text styles are
+embossed (raised), embedded (inlaid in shallow pockets), and engraved (cut into the tag). Each
+style supports a separate color for every letter. Dimensions and font size are entered in
+millimetres; the default tag size is 75 × 28 mm, with 14 mm Arial lettering. All three styles
+export a color-aware 3MF with the tag body and individual colored letter parts. Engraved style
+cuts a pocket into the body and places each colored letter at the pocket floor. It does not use
+the Lifeguard tag model or app.
+
+Run it with the CadQuery-enabled Python environment:
+
+```bash
+python nametag_app.py
+```
+
 ## Preview in CQ-editor
 
 CQ-editor is a convenient way to iterate on the model before exporting an STL.
